@@ -205,10 +205,11 @@ class MjViewer(MjViewerBasic):
         self._markers[:] = []
         self._overlay.clear()
 
-    def _read_pixels_as_in_window(self):
-        # Reads pixels with markers and overlay from the same camera as screen.
-        resolution = glfw.get_framebuffer_size(
-            self.sim._render_context_window.window)
+    def _read_pixels_as_in_window(self, resolution=None, scn_flags=None, vopt_flags=None):
+        if resolution is None:
+            # Reads pixels with markers and overlay from the same camera as screen.
+            resolution = glfw.get_framebuffer_size(
+                self.sim._render_context_window.window)
 
         resolution = np.array(resolution)
         resolution = resolution * min(1000 / np.min(resolution), 1)
@@ -228,6 +229,11 @@ class MjViewer(MjViewerBasic):
         offscreen_ctx._overlay.update(window_ctx._overlay)
         rec_assign(offscreen_ctx.cam, rec_copy(window_ctx.cam))
 
+        if not scn_flags is None:
+            np.copyto(offscreen_ctx.scn.flags, scn_flags)
+        if not vopt_flags is None:
+            np.copyto(offscreen_ctx.vopt.flags, vopt_flags)
+
         img = self.sim.render(*resolution)
         img = img[::-1, :, :] # Rendered images are upside-down.
         # Restore markers and overlay to offscreen.
@@ -235,7 +241,7 @@ class MjViewer(MjViewerBasic):
         offscreen_ctx._overlay.clear()
         offscreen_ctx._overlay.update(saved[1])
         rec_assign(offscreen_ctx.cam, saved[2])
-        return img
+        return img 
 
     def _create_full_overlay(self):
         if self._render_every_frame:
