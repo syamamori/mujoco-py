@@ -1,6 +1,7 @@
 include "mjmodel.pxd"
 include "mjdata.pxd"
 include "mjrender.pxd"
+include "mjui.pxd"
 include "mjvisualize.pxd"
 
 
@@ -25,8 +26,8 @@ cdef extern from "mujoco.h" nogil:
     # mjfSensor   mjcb_sensor;
     # mjfTime     mjcb_time;
     # mjfAct      mjcb_act_dyn;
-    # mjfAct      mjcb_act_gain;
-    # mjfAct      mjcb_act_bias;
+    mjfAct      mjcb_act_gain;
+    mjfAct      mjcb_act_bias;
     # mjfSolImp   mjcb_sol_imp;
     # mjfSolRef   mjcb_sol_ref;
     #
@@ -87,19 +88,19 @@ cdef extern from "mujoco.h" nogil:
     # Parse XML file in MJCF or URDF format, compile it, return low-level model.
     # If vfs is not NULL, look up files in vfs before reading from disk.
     # If error is not NULL, it must have size error_sz.
-    mjModel* mj_loadXML(const char* filename, const mjVFS* vfs, 
+    mjModel* mj_loadXML(const char* filename, const mjVFS* vfs,
                               char* error, int error_sz);
 
     # Update XML data structures with info from low-level model, save as MJCF.
     # If error is not NULL, it must have size error_sz.
-    int mj_saveLastXML(const char* filename, const mjModel* m, 
+    int mj_saveLastXML(const char* filename, const mjModel* m,
                              char* error, int error_sz);
 
     # Free last XML model if loaded. Called internally at each load.
     void mj_freeLastXML();
 
     # Print internal XML schema as plain text or HTML, with style-padding or &nbsp;.
-    int mj_printSchema(const char* filename, char* buffer, int buffer_sz, 
+    int mj_printSchema(const char* filename, char* buffer, int buffer_sz,
                              int flg_html, int flg_pad);
 
 
@@ -121,15 +122,24 @@ cdef extern from "mujoco.h" nogil:
     void mj_inverse(const mjModel* m, mjData* d);
 
     # Forward dynamics with skip; skipstage is mjtStage.
-    void mj_forwardSkip(const mjModel* m, mjData* d, 
+    void mj_forwardSkip(const mjModel* m, mjData* d,
                               int skipstage, int skipsensorenergy);
 
     # Inverse dynamics with skip; skipstage is mjtStage.
-    void mj_inverseSkip(const mjModel* m, mjData* d, 
-                              int skipstage, int skipsensorenergy);
+    void mj_inverseSkip(const mjModel* m, mjData* d,
+                        int skipstage, int skipsensorenergy);
+
+    # Forward dynamics with skip; skipstage is mjtStage.
+    void mj_forwardSkip(const mjModel* m, mjData* d, int skipstage, int skipsensor);
+
+    # Inverse dynamics with skip; skipstage is mjtStage.
+    void mj_inverseSkip(const mjModel* m, mjData* d, int skipstage, int skipsensor);
 
 
     #--------------------- Initialization -------------------------------------------------
+
+    # Set default options for length range computation.
+    void mj_defaultLROpt(mjLROpt* opt);
 
     # Set solver parameters to default values.
     void mj_defaultSolRefImp(mjtNum* solref, mjtNum* solimp);
@@ -181,24 +191,26 @@ cdef extern from "mujoco.h" nogil:
     void mj_resetCallbacks();
 
     # Set constant fields of mjModel, corresponding to qpos0 configuration.
-    # The flag flg_actrange currently has no effect.
-    void mj_setConst(mjModel* m, mjData* d, int flg_actrange);
+    void mj_setConst(mjModel* m, mjData* d);
 
+    # Set actuator_lengthrange for specified actuator; return 1 if ok, 0 if error.
+    int mj_setLengthRange(mjModel* m, mjData* d, int index,
+                          const mjLROpt* opt, char* error, int error_sz);
 
     #--------------------- Printing -------------------------------------------------------
 
     # Print model to text file.
-    void mj_printModel(const mjModel* m, const char* filename); 
+    void mj_printModel(const mjModel* m, const char* filename);
 
     # Print data to text file.
-    void mj_printData(const mjModel* m, mjData* d, const char* filename); 
+    void mj_printData(const mjModel* m, mjData* d, const char* filename);
 
     # Print matrix to screen.
     void mju_printMat(const mjtNum* mat, int nr, int nc);
 
     # Print sparse matrix to screen.
     void mju_printMatSparse(const mjtNum* mat, int nr,
-                                  const int* rownnz, const int* rowadr, 
+                                  const int* rownnz, const int* rowadr,
                                   const int* colind);
 
 
@@ -297,6 +309,9 @@ cdef extern from "mujoco.h" nogil:
     # Compute qfrc_passive from spring-dampers, viscosity and density.
     void mj_passive(const mjModel* m, mjData* d);
 
+    # subtree linear velocity and angular momentum
+    void mj_subtreeVel(const mjModel* m, mjData* d);
+
     # RNE: compute M(qpos)*qacc + C(qpos,qvel); flg_acc=0 removes inertial term.
     void mj_rne(const mjModel* m, mjData* d, int flg_acc, mjtNum* result);
 
@@ -336,35 +351,35 @@ cdef extern from "mujoco.h" nogil:
     int mj_isDual(const mjModel* m);
 
     # Multiply dense or sparse constraint Jacobian by vector.
-    void mj_mulJacVec(const mjModel* m, mjData* d, 
+    void mj_mulJacVec(const mjModel* m, mjData* d,
                             mjtNum* res, const mjtNum* vec);
 
     # Multiply dense or sparse constraint Jacobian transpose by vector.
     void mj_mulJacTVec(const mjModel* m, mjData* d, mjtNum* res, const mjtNum* vec);
 
     # Compute 3/6-by-nv end-effector Jacobian of global point attached to given body.
-    void mj_jac(const mjModel* m, const mjData* d, 
+    void mj_jac(const mjModel* m, const mjData* d,
                       mjtNum* jacp, mjtNum* jacr, const mjtNum point[3], int body);
 
     # Compute body frame end-effector Jacobian.
-    void mj_jacBody(const mjModel* m, const mjData* d, 
+    void mj_jacBody(const mjModel* m, const mjData* d,
                           mjtNum* jacp, mjtNum* jacr, int body);
 
     # Compute body center-of-mass end-effector Jacobian.
-    void mj_jacBodyCom(const mjModel* m, const mjData* d, 
+    void mj_jacBodyCom(const mjModel* m, const mjData* d,
                              mjtNum* jacp, mjtNum* jacr, int body);
 
     # Compute geom end-effector Jacobian.
-    void mj_jacGeom(const mjModel* m, const mjData* d, 
+    void mj_jacGeom(const mjModel* m, const mjData* d,
                           mjtNum* jacp, mjtNum* jacr, int geom);
 
     # Compute site end-effector Jacobian.
-    void mj_jacSite(const mjModel* m, const mjData* d, 
+    void mj_jacSite(const mjModel* m, const mjData* d,
                           mjtNum* jacp, mjtNum* jacr, int site);
 
     # Compute translation end-effector Jacobian of point, and rotation Jacobian of axis.
-    void mj_jacPointAxis(const mjModel* m, mjData* d, 
-                               mjtNum* jacPoint, mjtNum* jacAxis, 
+    void mj_jacPointAxis(const mjModel* m, mjData* d,
+                               mjtNum* jacPoint, mjtNum* jacAxis,
                                const mjtNum point[3], const mjtNum axis[3], int body);
 
     # Get id of object with specified name, return -1 if not found; type is mjtObj.
@@ -379,30 +394,33 @@ cdef extern from "mujoco.h" nogil:
     # Multiply vector by inertia matrix.
     void mj_mulM(const mjModel* m, const mjData* d, mjtNum* res, const mjtNum* vec);
 
+    # Multiply vector by (inertia matrix)^(1/2).
+    void mj_mulM2(const mjModel* m, const mjData* d, mjtNum* res, const mjtNum* vec);
+
     # Add inertia matrix to destination matrix.
     # Destination can be sparse uncompressed, or dense when all int* are NULL
-    void mj_addM(const mjModel* m, mjData* d, mjtNum* dst, 
+    void mj_addM(const mjModel* m, mjData* d, mjtNum* dst,
                        int* rownnz, int* rowadr, int* colind);
 
     # Apply cartesian force and torque (outside xfrc_applied mechanism).
-    void mj_applyFT(const mjModel* m, mjData* d, 
-                          const mjtNum* force, const mjtNum* torque, 
+    void mj_applyFT(const mjModel* m, mjData* d,
+                          const mjtNum* force, const mjtNum* torque,
                           const mjtNum* point, int body, mjtNum* qfrc_target);
 
     # Compute object 6D velocity in object-centered frame, world/local orientation.
-    void mj_objectVelocity(const mjModel* m, const mjData* d, 
+    void mj_objectVelocity(const mjModel* m, const mjData* d,
                                  int objtype, int objid, mjtNum* res, int flg_local);
 
     # Compute object 6D acceleration in object-centered frame, world/local orientation.
-    void mj_objectAcceleration(const mjModel* m, const mjData* d, 
+    void mj_objectAcceleration(const mjModel* m, const mjData* d,
                                      int objtype, int objid, mjtNum* res, int flg_local);
-
-    # Compute velocity by finite-differencing two positions.
-    void mj_differentiatePos(const mjModel* m, mjtNum* qvel, mjtNum dt,
-                                   const mjtNum* qpos1, const mjtNum* qpos2);
 
     # Extract 6D force:torque for one contact, in contact frame.
     void mj_contactForce(const mjModel* m, const mjData* d, int id, mjtNum* result);
+
+    # Compute velocity by finite-differencing two positions.
+    void mj_differentiatePos(const mjModel* m, mjtNum* qvel, mjtNum dt,
+                             const mjtNum* qpos1, const mjtNum* qpos2);
 
     # Integrate position with given velocity.
     void mj_integratePos(const mjModel* m, mjtNum* qpos, const mjtNum* qvel, mjtNum dt);
@@ -411,8 +429,8 @@ cdef extern from "mujoco.h" nogil:
     void mj_normalizeQuat(const mjModel* m, mjtNum* qpos);
 
     # Map from body local to global Cartesian coordinates.
-    void mj_local2Global(mjData* d, mjtNum* xpos, mjtNum* xmat, 
-                               const mjtNum* pos, const mjtNum* quat, int body);
+    void mj_local2Global(mjData* d, mjtNum* xpos, mjtNum* xmat, const mjtNum* pos, const mjtNum* quat,
+                         int body, mjtByte sameframe);
 
     # Sum all body masses.
     mjtNum mj_getTotalmass(const mjModel* m);
@@ -430,7 +448,7 @@ cdef extern from "mujoco.h" nogil:
     # Return geomid and distance (x) to nearest surface, or -1 if no intersection.
     # geomgroup, flg_static are as in mjvOption; geomgroup==NULL skips group exclusion.
     mjtNum mj_ray(const mjModel* m, const mjData* d, const mjtNum* pnt, const mjtNum* vec,
-                        const mjtByte* geomgroup, mjtByte flg_static, int bodyexclude, 
+                        const mjtByte* geomgroup, mjtByte flg_static, int bodyexclude,
                         int* geomid);
 
     # Interect ray with hfield, return nearest distance or -1 if no intersection.
@@ -442,7 +460,7 @@ cdef extern from "mujoco.h" nogil:
                             const mjtNum* pnt, const mjtNum* vec);
 
     # Interect ray with pure geom, return nearest distance or -1 if no intersection.
-    mjtNum mju_rayGeom(const mjtNum* pos, const mjtNum* mat, const mjtNum* size, 
+    mjtNum mju_rayGeom(const mjtNum* pos, const mjtNum* mat, const mjtNum* size,
                              const mjtNum* pnt, const mjtNum* vec, int geomtype);
 
 
@@ -455,11 +473,11 @@ cdef extern from "mujoco.h" nogil:
     void mjv_defaultPerturb(mjvPerturb* pert);
 
     # Transform pose from room to model space.
-    void mjv_room2model(mjtNum* modelpos, mjtNum* modelquat, const mjtNum* roompos, 
+    void mjv_room2model(mjtNum* modelpos, mjtNum* modelquat, const mjtNum* roompos,
                               const mjtNum* roomquat, const mjvScene* scn);
 
     # Transform pose from model to room space.
-    void mjv_model2room(mjtNum* roompos, mjtNum* roomquat, const mjtNum* modelpos, 
+    void mjv_model2room(mjtNum* roompos, mjtNum* roomquat, const mjtNum* modelpos,
                               const mjtNum* modelquat, const mjvScene* scn);
 
     # Get camera info in model space; average left and right OpenGL cameras.
@@ -477,11 +495,11 @@ cdef extern from "mujoco.h" nogil:
     void mjv_alignToCamera(mjtNum* res, const mjtNum* vec, const mjtNum* forward);
 
     # Move camera with mouse; action is mjtMouse.
-    void mjv_moveCamera(const mjModel* m, int action, mjtNum reldx, mjtNum reldy, 
+    void mjv_moveCamera(const mjModel* m, int action, mjtNum reldx, mjtNum reldy,
                               const mjvScene* scn, mjvCamera* cam);
 
     # Move perturb object with mouse; action is mjtMouse.
-    void mjv_movePerturb(const mjModel* m, const mjData* d, int action, mjtNum reldx, 
+    void mjv_movePerturb(const mjModel* m, const mjData* d, int action, mjtNum reldx,
                                mjtNum reldy, const mjvScene* scn, mjvPerturb* pert);
 
     # Move model with mouse; action is mjtMouse.
@@ -489,12 +507,12 @@ cdef extern from "mujoco.h" nogil:
                              const mjtNum* roomup, mjvScene* scn);
 
     # Copy perturb pos,quat from selected body; set scale for perturbation.
-    void mjv_initPerturb(const mjModel* m, const mjData* d, 
+    void mjv_initPerturb(const mjModel* m, const mjData* d,
                                const mjvScene* scn, mjvPerturb* pert);
 
     # Set perturb pos,quat in d->mocap when selected body is mocap, and in d->qpos otherwise.
     # Write d->qpos only if flg_paused and subtree root for selected body has free joint.
-    void mjv_applyPerturbPose(const mjModel* m, mjData* d, const mjvPerturb* pert, 
+    void mjv_applyPerturbPose(const mjModel* m, mjData* d, const mjvPerturb* pert,
                                     int flg_paused);
 
     # Set perturb force,torque in d->xfrc_applied, if selected body is dynamic.
@@ -503,11 +521,10 @@ cdef extern from "mujoco.h" nogil:
     # Return the average of two OpenGL cameras.
     mjvGLCamera mjv_averageCamera(const mjvGLCamera* cam1, const mjvGLCamera* cam2);
 
-    # Select model geom with mouse, return -1 if none selected. selpnt is the 3D point.
+    # Select geom or skin with mouse, return bodyid; -1: none selected.
     int mjv_select(const mjModel* m, const mjData* d, const mjvOption* vopt,
-                         mjtNum aspectratio, mjtNum relx, mjtNum rely, 
-                         const mjvScene* scn, mjtNum* selpnt);
-
+                   mjtNum aspectratio, mjtNum relx, mjtNum rely,
+                   const mjvScene* scn, mjtNum* selpnt, int* geomid, int* skinid);
 
     #--------------------- Visualization --------------------------------------------------
 
@@ -523,27 +540,35 @@ cdef extern from "mujoco.h" nogil:
 
     # Set (type, size, pos, mat) for connector-type geom between given points.
     # Assume that mjv_initGeom was already called to set all other properties.
-    void mjv_makeConnector(mjvGeom* geom, int type, mjtNum width, 
-                                 mjtNum a0, mjtNum a1, mjtNum a2, 
+    void mjv_makeConnector(mjvGeom* geom, int type, mjtNum width,
+                                 mjtNum a0, mjtNum a1, mjtNum a2,
                                  mjtNum b0, mjtNum b1, mjtNum b2);
 
-    # Allocate and init abstract scene.
-    void mjv_makeScene(mjvScene* scn, int maxgeom);
+    # Set default abstract scene.
+    void mjv_defaultScene(mjvScene* scn);
+
+    # Allocate resources in abstract scene.
+    void mjv_makeScene(const mjModel* m, mjvScene* scn, int maxgeom);
 
     # Free abstract scene.
     void mjv_freeScene(mjvScene* scn);
 
     # Update entire scene given model state.
-    void mjv_updateScene(const mjModel* m, mjData* d, const mjvOption* opt, 
+    void mjv_updateScene(const mjModel* m, mjData* d, const mjvOption* opt,
                                const mjvPerturb* pert, mjvCamera* cam, int catmask, mjvScene* scn);
 
     # Add geoms from selected categories to existing scene.
-    void mjv_addGeoms(const mjModel* m, mjData* d, const mjvOption* opt, 
+    void mjv_addGeoms(const mjModel* m, mjData* d, const mjvOption* opt,
                             const mjvPerturb* pert, int catmask, mjvScene* scn);
+
+    # Make list of lights.
+    void mjv_makeLights(const mjModel* m, mjData* d, mjvScene* scn);
 
     # Update camera only.
     void mjv_updateCamera(const mjModel* m, mjData* d, mjvCamera* cam, mjvScene* scn);
 
+    # Update skins.
+    void mjv_updateSkin(const mjModel* m, mjData* d, mjvScene* scn);
 
     #--------------------- OpenGL rendering -----------------------------------------------
 
@@ -552,6 +577,12 @@ cdef extern from "mujoco.h" nogil:
 
     # Allocate resources in custom OpenGL context; fontscale is mjtFontScale.
     void mjr_makeContext(const mjModel* m, mjrContext* con, int fontscale);
+
+    # Change font of existing context.
+    void mjr_changeFont(int fontscale, mjrContext* con);
+
+    # Add Aux buffer with given index to context; free previous Aux buffer.
+    void mjr_addAux(int index, int width, int height, int samples, mjrContext* con);
 
     # Free resources in custom OpenGL context, set to default.
     void mjr_freeContext(mjrContext* con);
@@ -564,6 +595,9 @@ cdef extern from "mujoco.h" nogil:
 
     # Upload height field to GPU, overwriting previous upload if any.
     void mjr_uploadHField(const mjModel* m, const mjrContext* con, int hfieldid);
+
+    # Make con->currentBuffer current again.
+    void mjr_restoreBuffer(const mjrContext* con);
 
     # Set OpenGL framebuffer for rendering: mjFB_WINDOW or mjFB_OFFSCREEN.
     # If only one buffer is available, set that buffer and ignore framebuffer argument.
@@ -581,8 +615,13 @@ cdef extern from "mujoco.h" nogil:
 
     # Blit from src viewpoint in current framebuffer to dst viewport in other framebuffer.
     # If src, dst have different size and flg_depth==0, color is interpolated with GL_LINEAR.
-    void mjr_blitBuffer(mjrRect src, mjrRect dst, 
-                              int flg_color, int flg_depth, const mjrContext* con);
+    void mjr_blitBuffer(mjrRect src, mjrRect dst, int flg_color, int flg_depth, const mjrContext* con);
+
+    # Set Aux buffer for custom OpenGL rendering (call restoreBuffer when done).
+    void mjr_setAux(int index, const mjrContext* con);
+
+    # Blit from Aux buffer to con->currentBuffer.
+    void mjr_blitAux(int index, mjrRect src, int left, int bottom, const mjrContext* con);
 
     # Draw text at (x,y) in relative coordinates; font is mjtFont.
     void mjr_text(int font, const char* txt, const mjrContext* con,
@@ -609,6 +648,26 @@ cdef extern from "mujoco.h" nogil:
 
     # Call glGetError and return result.
     int mjr_getError();
+
+    # Find first rectangle containing mouse, -1: not found.
+    int mjr_findRect(int x, int y, int nrect, const mjrRect* rect);
+
+    #---------------------- UI framework ---------------------------------------------------
+
+    # Add definitions to UI.
+    void mjui_add(mjUI* ui, const mjuiDef* _def);
+
+    # Compute UI sizes.
+    void mjui_resize(mjUI* ui, const mjrContext* con);
+
+    # Update specific section/item; -1: update all.
+    void mjui_update(int section, int item, const mjUI* ui, const mjuiState* state, const mjrContext* con);
+
+    # Handle UI event, return pointer to changed item, NULL if no change.
+    mjuiItem* mjui_event(mjUI* ui, mjuiState* state, const mjrContext* con);
+
+    # Copy UI image to current buffer.
+    void mjui_render(mjUI* ui, const mjuiState* state, const mjrContext* con);
 
 
     #--------------------- Error and memory -----------------------------------------------
@@ -756,6 +815,12 @@ cdef extern from "mujoco.h" nogil:
     # Set res = vec.
     void mju_copy(mjtNum* res, const mjtNum* data, int n);
 
+    # Return sum(vec).
+    mjtNum mju_sum(const mjtNum* vec, int n);
+
+    # Return L1 norm: sum(abs(vec)).
+    mjtNum mju_L1(const mjtNum* vec, int n);
+
     # Set res = vec*scl.
     void mju_scl(mjtNum* res, const mjtNum* vec, mjtNum scl, int n);
 
@@ -815,7 +880,7 @@ cdef extern from "mujoco.h" nogil:
     # Coordinate transform of 6D motion or force vector in rotation:translation format.
     # rotnew2old is 3-by-3, NULL means no rotation; flg_force specifies force or motion type.
     void mju_transformSpatial(mjtNum res[6], const mjtNum vec[6], int flg_force,
-                                    const mjtNum newpos[3], const mjtNum oldpos[3], 
+                                    const mjtNum newpos[3], const mjtNum oldpos[3],
                                     const mjtNum rotnew2old[9]);
 
 
@@ -839,23 +904,23 @@ cdef extern from "mujoco.h" nogil:
                                 const int* rownnz, const int* rowadr, const int* colind);
 
     # Multiply sparse matrix and dense vector:  res = mat * vec.
-    void mju_mulMatVecSparse(mjtNum* res, const mjtNum* mat, const mjtNum* vec, int nr, 
+    void mju_mulMatVecSparse(mjtNum* res, const mjtNum* mat, const mjtNum* vec, int nr,
                                    const int* rownnz, const int* rowadr, const int* colind);
 
     # Compress layout of sparse matrix.
-    void mju_compressSparse(mjtNum* mat, int nr, int nc, 
+    void mju_compressSparse(mjtNum* mat, int nr, int nc,
                                   int* rownnz, int* rowadr, int* colind);
 
     # Set dst = a*dst + b*src, return nnz of result, modify dst sparsity pattern as needed.
     # Both vectors are sparse. The required scratch space is 2*n.
     int mju_combineSparse(mjtNum* dst, const mjtNum* src, int n, mjtNum a, mjtNum b,
-                                int dst_nnz, int src_nnz, int* dst_ind, const int* src_ind, 
+                                int dst_nnz, int src_nnz, int* dst_ind, const int* src_ind,
                                 mjtNum* scratch, int nscratch);
 
     # Set res = matT * diag * mat if diag is not NULL, and res = matT * mat otherwise.
     # The required scratch space is 3*nc. The result has uncompressed layout.
-    void mju_sqrMatTDSparse(mjtNum* res, const mjtNum* mat, const mjtNum* matT, 
-                                  const mjtNum* diag, int nr, int nc, 
+    void mju_sqrMatTDSparse(mjtNum* res, const mjtNum* mat, const mjtNum* matT,
+                                  const mjtNum* diag, int nr, int nc,
                                   int* res_rownnz, int* res_rowadr, int* res_colind,
                                   const int* rownnz, const int* rowadr, const int* colind,
                                   const int* rownnzT, const int* rowadrT, const int* colindT,
@@ -887,6 +952,9 @@ cdef extern from "mujoco.h" nogil:
     # Convert quaternion (corresponding to orientation difference) to 3D velocity.
     void mju_quat2Vel(mjtNum res[3], const mjtNum quat[4], mjtNum dt);
 
+    # Subtract quaternions, express as 3D velocity: qb*quat(res) = qa.
+    void mju_subQuat(mjtNum res[3], const mjtNum qa[4], const mjtNum qb[4]);
+
     # Convert quaternion to 3D rotation matrix.
     void mju_quat2Mat(mjtNum res[9], const mjtNum quat[4]);
 
@@ -906,8 +974,8 @@ cdef extern from "mujoco.h" nogil:
     #--------------------- Poses ----------------------------------------------------------
 
     # Multiply two poses.
-    void mju_mulPose(mjtNum posres[3], mjtNum quatres[4], 
-                           const mjtNum pos1[3], const mjtNum quat1[4], 
+    void mju_mulPose(mjtNum posres[3], mjtNum quatres[4],
+                           const mjtNum pos1[3], const mjtNum quat1[4],
                            const mjtNum pos2[3], const mjtNum quat2[4]);
 
     # Negate pose.
@@ -922,7 +990,7 @@ cdef extern from "mujoco.h" nogil:
     #--------------------- Decompositions --------------------------------------------------
 
     # Cholesky decomposition: mat = L*L'; return rank.
-    int mju_cholFactor(mjtNum* mat, int n);
+    int mju_cholFactor(mjtNum* mat, int n, mjtNum mindiag);
 
     # Solve mat * res = vec, where mat is Cholesky-factorized
     void mju_cholSolve(mjtNum* res, const mjtNum* mat, const mjtNum* vec, int n);
@@ -930,39 +998,23 @@ cdef extern from "mujoco.h" nogil:
     # Cholesky rank-one update: L*L' +/- x*x'; return rank.
     int mju_cholUpdate(mjtNum* mat, mjtNum* x, int n, int flg_plus);
 
-    # Sparse reverse-order Cholesky decomposition: mat = L'*L; return 'rank'.
-    # mat must have uncompressed layout; rownnz is modified to end at diagonal.
-    # The required scratch space is 2*n.
-    int mju_cholFactorSparse(mjtNum* mat, int n, 
-                                   int* rownnz, int* rowadr, int* colind,
-                                   mjtNum* scratch, int nscratch);
-
-    # Solve mat * res = vec, where mat is sparse reverse-order Cholesky factorized.
-    void mju_cholSolveSparse(mjtNum* res, const mjtNum* mat, const mjtNum* vec, int n,
-                                   const int* rownnz, const int* rowadr, const int* colind);
-
-    # Sparse reverse-order Cholesky rank-one update: L'*L +/- x*x'; return rank.
-    # The vector x is sparse; changes in sparsity pattern of mat are not allowed.
-    # The required scratch space is 2*n.
-    int mju_cholUpdateSparse(mjtNum* mat, mjtNum* x, int n, int flg_plus,
-                                   int* rownnz, int* rowadr, int* colind, int x_nnz, int* x_ind, 
-                                   mjtNum* scratch, int nscratch);
-
     # Eigenvalue decomposition of symmetric 3x3 matrix.
     int mju_eig3(mjtNum* eigval, mjtNum* eigvec, mjtNum* quat, const mjtNum* mat);
 
 
     #--------------------- Miscellaneous --------------------------------------------------
 
-    # Muscle model; not yet implemented.
-    mjtNum mju_muscleFVL(mjtNum len, mjtNum vel, mjtNum lmin, mjtNum lmax, mjtNum* prm);
+    # Muscle active force, prm = (range[2], force, scale, lmin, lmax, vmax, fpmax, fvmax).
+    mjtNum mju_muscleGain(mjtNum len, mjtNum vel, const mjtNum lengthrange[2],
+                          mjtNum acc0, const mjtNum prm[9]);
 
-    # Passive muscle force; not yet implemented.
-    mjtNum mju_musclePassive(mjtNum len, mjtNum lmin, mjtNum lmax, mjtNum* prm);
+    # Muscle passive force, prm = (range[2], force, scale, lmin, lmax, vmax, fpmax, fvmax).
+    mjtNum mju_muscleBias(mjtNum len, const mjtNum lengthrange[2],
+                          mjtNum acc0, const mjtNum prm[9]);
 
-    # Pneumatic cylinder dynamics; not yet implemented.
-    mjtNum mju_pneumatic(mjtNum len, mjtNum len0, mjtNum vel, mjtNum* prm,
-                               mjtNum act, mjtNum ctrl, mjtNum timestep, mjtNum* jac);
+    # Muscle activation dynamics, prm = (tau_act, tau_deact).
+    mjtNum mju_muscleDynamics(mjtNum ctrl, mjtNum act, const mjtNum prm[2]);
+
 
     # Convert contact force to pyramid representation.
     void mju_encodePyramid(mjtNum* pyramid, const mjtNum* force,

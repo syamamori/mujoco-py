@@ -1,26 +1,26 @@
 import distutils
+import glob
 import os
 import shutil
+import subprocess
 import sys
 from distutils.core import Extension
 from distutils.dist import Distribution
 from distutils.sysconfig import customize_compiler
+from importlib.machinery import ExtensionFileLoader
 from os.path import abspath, dirname, exists, join, getmtime
 from random import choice
 from shutil import move
 from string import ascii_lowercase
-from importlib.machinery import ExtensionFileLoader
-import glob
 
+import fasteners
 import numpy as np
-from cffi import FFI
 from Cython.Build import cythonize
 from Cython.Distutils.old_build_ext import old_build_ext as build_ext
-from mujoco_py.version import get_version
-from lockfile import LockFile
-import subprocess
+from cffi import FFI
 
-from mujoco_py.utils import discover_mujoco
+from mujoco_py.utils import discover_mujoco, MISSING_KEY_MESSAGE
+from mujoco_py.version import get_version
 
 
 def get_nvidia_lib_dir():
@@ -41,7 +41,7 @@ def get_nvidia_lib_dir():
     return paths[-1]
 
 
-def load_cython_ext(mjpro_path):
+def load_cython_ext(mujoco_path):
     """
     Loads the cymj Cython extension. This is safe to be called from
     multiple processes running on the same machine.
@@ -62,7 +62,7 @@ MuJoCo comes with its own version of GLFW, so it's preferable to use that one.
 The easy solution is to `import mujoco_py` _before_ `import glfw`.
 ''')
 
-    lib_path = os.path.join(mjpro_path, "bin")
+    lib_path = os.path.join(mujoco_path, "bin")
     if sys.platform == 'darwin':
         Builder = MacExtensionBuilder
     elif sys.platform == 'linux':
@@ -81,12 +81,12 @@ The easy solution is to `import mujoco_py` _before_ `import glfw`.
     else:
         raise RuntimeError("Unsupported platform %s" % sys.platform)
 
-    builder = Builder(mjpro_path)
+    builder = Builder(mujoco_path)
     cext_so_path = builder.get_so_file_path()
 
     lockpath = os.path.join(os.path.dirname(cext_so_path), 'mujocopy-buildlock')
 
-    with LockFile(lockpath):
+    with fasteners.InterProcessLock(lockpath):
         mod = None
         force_rebuild = os.environ.get('MUJOCO_PY_FORCE_REBUILD')
         if force_rebuild:
@@ -104,6 +104,7 @@ The easy solution is to `import mujoco_py` _before_ `import glfw`.
         if mod is None:
             cext_so_path = builder.build()
             mod = load_dynamic_ext('cymj', cext_so_path)
+
     return mod
 
 
@@ -119,7 +120,7 @@ def _ensure_set_env_var(var_name, lib_path):
 
 
 def load_dynamic_ext(name, path):
-    ''' Load compiled shared object and return as python module. '''
+    """ Load compiled shared object and return as python module. """
     loader = ExtensionFileLoader(name, path)
     return loader.load_module()
 
@@ -144,7 +145,7 @@ class custom_build_ext(build_ext):
 
 
 def fix_shared_library(so_file, name, library_path):
-    ''' Used to fixup shared libraries on Linux '''
+    """ Used to fixup shared libraries on Linux """
     subprocess.check_call(['patchelf', '--remove-rpath', so_file])
     ldd_output = subprocess.check_output(['ldd', so_file]).decode('utf-8')
 
@@ -153,8 +154,8 @@ def fix_shared_library(so_file, name, library_path):
     subprocess.check_call(['patchelf', '--add-needed', library_path, so_file])
 
 
-def manually_link_libraries(mjpro_path, raw_cext_dll_path):
-    ''' Used to fix mujoco library linking on Mac '''
+def manually_link_libraries(mujoco_path, raw_cext_dll_path):
+    """ Used to fix mujoco library linking on Mac """
     root, ext = os.path.splitext(raw_cext_dll_path)
     final_cext_dll_path = root + '_final' + ext
 
@@ -167,12 +168,12 @@ def manually_link_libraries(mjpro_path, raw_cext_dll_path):
     tmp_final_cext_dll_path = final_cext_dll_path + '~'
     shutil.copyfile(raw_cext_dll_path, tmp_final_cext_dll_path)
 
-    mj_bin_path = join(mjpro_path, 'bin')
+    mj_bin_path = join(mujoco_path, 'bin')
 
     # Fix the rpath of the generated library -- i lost the Stackoverflow
     # reference here
-    from_mujoco_path = '@executable_path/libmujoco150.dylib'
-    to_mujoco_path = '%s/libmujoco150.dylib' % mj_bin_path
+    from_mujoco_path = '@executable_path/libmujoco200.dylib'
+    to_mujoco_path = '%s/libmujoco200.dylib' % mj_bin_path
     subprocess.check_call(['install_name_tool',
                            '-change',
                            from_mujoco_path,
@@ -195,8 +196,8 @@ class MujocoExtensionBuilder():
 
     CYMJ_DIR_PATH = abspath(dirname(__file__))
 
-    def __init__(self, mjpro_path):
-        self.mjpro_path = mjpro_path
+    def __init__(self, mujoco_path):
+        self.mujoco_path = mujoco_path
         python_version = str(sys.version_info.major) + str(sys.version_info.minor)
         self.version = '%s_%s_%s' % (get_version(), python_version, self.build_base())
         self.extension = Extension(
@@ -204,11 +205,11 @@ class MujocoExtensionBuilder():
             sources=[join(self.CYMJ_DIR_PATH, "cymj.pyx")],
             include_dirs=[
                 self.CYMJ_DIR_PATH,
-                join(mjpro_path, 'include'),
+                join(mujoco_path, 'include'),
                 np.get_include(),
             ],
-            libraries=['mujoco150'],
-            library_dirs=[join(mjpro_path, 'bin')],
+            libraries=['mujoco200'],
+            library_dirs=[join(mujoco_path, 'bin')],
             extra_compile_args=[
                 '-fopenmp',  # needed for OpenMP
                 '-w',  # suppress numpy compilation warnings
@@ -252,65 +253,72 @@ class MujocoExtensionBuilder():
 
 class WindowsExtensionBuilder(MujocoExtensionBuilder):
 
-    def __init__(self, mjpro_path):
-        super().__init__(mjpro_path)
-        os.environ["PATH"] += ";" + join(mjpro_path, "bin")
+    def __init__(self, mujoco_path):
+        super().__init__(mujoco_path)
+        os.environ["PATH"] += ";" + join(mujoco_path, "bin")
         self.extension.sources.append(self.CYMJ_DIR_PATH + "/gl/dummyshim.c")
 
 
 class LinuxCPUExtensionBuilder(MujocoExtensionBuilder):
 
-    def __init__(self, mjpro_path):
-        super().__init__(mjpro_path)
+    def __init__(self, mujoco_path):
+        super().__init__(mujoco_path)
 
         self.extension.sources.append(
             join(self.CYMJ_DIR_PATH, "gl", "osmesashim.c"))
         self.extension.libraries.extend(['glewosmesa', 'OSMesa', 'GL'])
-        self.extension.runtime_library_dirs = [join(mjpro_path, 'bin')]
+        self.extension.runtime_library_dirs = [join(mujoco_path, 'bin')]
 
     def _build_impl(self):
         so_file_path = super()._build_impl()
         # Removes absolute paths to libraries. Allows for dynamic loading.
-        fix_shared_library(so_file_path, 'libmujoco150.so', 'libmujoco150.so')
+        fix_shared_library(so_file_path, 'libmujoco200.so', 'libmujoco200.so')
         fix_shared_library(so_file_path, 'libglewosmesa.so', 'libglewosmesa.so')
         return so_file_path
 
 
 class LinuxGPUExtensionBuilder(MujocoExtensionBuilder):
 
-    def __init__(self, mjpro_path):
-        super().__init__(mjpro_path)
+    def __init__(self, mujoco_path):
+        super().__init__(mujoco_path)
 
         self.extension.sources.append(self.CYMJ_DIR_PATH + "/gl/eglshim.c")
         self.extension.include_dirs.append(self.CYMJ_DIR_PATH + '/vendor/egl')
         self.extension.libraries.extend(['glewegl'])
-        self.extension.runtime_library_dirs = [join(mjpro_path, 'bin')]
+        self.extension.runtime_library_dirs = [join(mujoco_path, 'bin')]
 
     def _build_impl(self):
         so_file_path = super()._build_impl()
         fix_shared_library(so_file_path, 'libOpenGL.so', 'libOpenGL.so.0')
         fix_shared_library(so_file_path, 'libEGL.so', 'libEGL.so.1')
-        fix_shared_library(so_file_path, 'libmujoco150.so', 'libmujoco150.so')
+        fix_shared_library(so_file_path, 'libmujoco200.so', 'libmujoco200.so')
         fix_shared_library(so_file_path, 'libglewegl.so', 'libglewegl.so')
         return so_file_path
 
 
 class MacExtensionBuilder(MujocoExtensionBuilder):
 
-    def __init__(self, mjpro_path):
-        super().__init__(mjpro_path)
+    def __init__(self, mujoco_path):
+        super().__init__(mujoco_path)
 
         self.extension.sources.append(self.CYMJ_DIR_PATH + "/gl/dummyshim.c")
         self.extension.libraries.extend(['glfw.3'])
         self.extension.define_macros = [('ONMAC', None)]
-        self.extension.runtime_library_dirs = [join(mjpro_path, 'bin')]
+        self.extension.runtime_library_dirs = [join(mujoco_path, 'bin')]
 
     def _build_impl(self):
         if not os.environ.get('CC'):
-            # Known-working versions of GCC on mac
-            c_compilers = ['/usr/local/bin/gcc-6',
-                           '/usr/local/bin/gcc-7',
-                           '/usr/local/bin/gcc-8']
+            # Known-working versions of GCC on mac (prefer latest one)
+            c_compilers = [
+                '/usr/local/bin/gcc-9',
+                '/usr/local/bin/gcc-8',
+                '/usr/local/bin/gcc-7',
+                '/usr/local/bin/gcc-6',
+                '/opt/local/bin/gcc-mp-9',
+                '/opt/local/bin/gcc-mp-8',
+                '/opt/local/bin/gcc-mp-7',
+                '/opt/local/bin/gcc-mp-6',
+            ]
             available_c_compiler = None
             for c_compiler in c_compilers:
                 if distutils.spawn.find_executable(c_compiler) is not None:
@@ -320,14 +328,15 @@ class MacExtensionBuilder(MujocoExtensionBuilder):
                 raise RuntimeError(
                     'Could not find GCC executable.\n\n'
                     'HINT: On OS X, install GCC with '
-                    '`brew install gcc`.')
+                    '`brew install gcc`. or '
+                    '`port install gcc`.')
             os.environ['CC'] = available_c_compiler
 
             so_file_path = super()._build_impl()
             del os.environ['CC']
         else:  # User-directed c compiler
             so_file_path = super()._build_impl()
-        return manually_link_libraries(self.mjpro_path, so_file_path)
+        return manually_link_libraries(self.mujoco_path, so_file_path)
 
 
 class MujocoException(Exception):
@@ -349,6 +358,9 @@ def user_warning_raise_exception(warn_bytes):
         raise MujocoException(warn + 'Increase njmax in mujoco XML')
     if 'Pre-allocated contact buffer is full' in warn:
         raise MujocoException(warn + 'Increase njconmax in mujoco XML')
+    # This unhelpfully-named warning is what you get if you feed MuJoCo NaNs
+    if 'Unknown warning type' in warn:
+        raise MujocoException(warn + 'Check for NaN in simulation.')
     raise MujocoException('Got MuJoCo Warning: {}'.format(warn))
 
 
@@ -464,9 +476,9 @@ def build_callback_fn(function_string, userdata_names=[]):
     source_string += '\nuintptr_t __fun = (uintptr_t) fun;'
     # Link against mujoco so we can call mujoco functions from within callback
     ffibuilder.set_source(name, source_string,
-                          include_dirs=[join(mjpro_path, 'include')],
-                          library_dirs=[join(mjpro_path, 'bin')],
-                          libraries=['mujoco150'])
+                          include_dirs=[join(mujoco_path, 'include')],
+                          library_dirs=[join(mujoco_path, 'bin')],
+                          libraries=['mujoco200'])
     # Catch compilation exceptions so we can cleanup partial files in that case
     try:
         library_path = ffibuilder.compile(verbose=True)
@@ -475,24 +487,12 @@ def build_callback_fn(function_string, userdata_names=[]):
         raise e
     # On Mac the MuJoCo library is linked strangely, so we have to fix it here
     if sys.platform == 'darwin':
-        fixed_library_path = manually_link_libraries(mjpro_path, library_path)
+        fixed_library_path = manually_link_libraries(mujoco_path, library_path)
         move(fixed_library_path, library_path)  # Overwrite with fixed library
     module = load_dynamic_ext(name, library_path)
     # Now that the module is loaded into memory, we can actually delete it
     build_fn_cleanup(name)
     return module.lib.__fun
-
-
-MISSING_KEY_MESSAGE = '''
-You appear to be missing a License Key for mujoco.  We expected to find the
-file here: {}
-
-You can get licenses at this page:
-
-    https://www.roboti.us/license.html
-
-If python tries to activate an invalid license, the process will exit.
-'''
 
 
 def find_key():
@@ -506,8 +506,8 @@ def activate():
     functions.mj_activate(key_path)
 
 
-mjpro_path, key_path = discover_mujoco()
-cymj = load_cython_ext(mjpro_path)
+mujoco_path, key_path = discover_mujoco()
+cymj = load_cython_ext(mujoco_path)
 
 
 # Trick to expose all mj* functions from mujoco in mujoco_py.*
