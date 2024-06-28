@@ -236,7 +236,7 @@ class MujocoExtensionBuilder():
             "script_name": None,
             "script_args": ["build_ext"]
         })
-        dist.ext_modules = cythonize([self.extension])
+        dist.ext_modules = cythonize([self.extension],compiler_directives={'legacy_implicit_noexcept': True})
         dist.include_dirs = []
         dist.cmdclass = {'build_ext': custom_build_ext}
         build = dist.get_command_obj('build')
